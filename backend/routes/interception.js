@@ -1,45 +1,33 @@
 import { Router } from 'express';
-import path from 'node:path';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { db } from '../utils/db.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const AUDIO_DIR = path.join(__dirname, '..', 'uploads', 'audio');
+import { supabaseAdmin, requireAuth } from '../utils/supabase.js';
 
 const router = Router();
 
-router.get('/list', (_req, res) => {
-  res.json(db.wiretaps.list());
+router.get('/list', requireAuth, async (_req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from('wiretaps')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-// Stream du fichier audio — avec Range support pour <audio> HTML5
-router.get('/stream/:id', (req, res) => {
-  const wt = db.wiretaps.find(req.params.id);
-  if (!wt) return res.status(404).end();
+/**
+ * GET /api/interception/signed/:id
+ * Retourne une URL signée temporaire (5 min) pour lire l'audio depuis Storage.
+ * Le <audio> ou wavesurfer du front utilisera cette URL directement.
+ */
+router.get('/signed/:id', requireAuth, async (req, res) => {
+  const { data: wt, error } = await supabaseAdmin
+    .from('wiretaps').select('*').eq('id', req.params.id).single();
+  if (error || !wt) return res.status(404).json({ error: 'Écoute introuvable' });
 
-  const filePath = path.join(AUDIO_DIR, wt.filename);
-  if (!fs.existsSync(filePath)) return res.status(404).end();
+  const { data: signed, error: signErr } = await supabaseAdmin
+    .storage.from('wiretaps')
+    .createSignedUrl(wt.storage_path, 300);
+  if (signErr) return res.status(500).json({ error: signErr.message });
 
-  const stat = fs.statSync(filePath);
-  const range = req.headers.range;
-  const mime = wt.filename.endsWith('.wav') ? 'audio/wav' : 'audio/mpeg';
-
-  if (range) {
-    const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(startStr, 10);
-    const end = endStr ? parseInt(endStr, 10) : stat.size - 1;
-    res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': end - start + 1,
-      'Content-Type': mime,
-    });
-    fs.createReadStream(filePath, { start, end }).pipe(res);
-  } else {
-    res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': mime });
-    fs.createReadStream(filePath).pipe(res);
-  }
+  res.json({ url: signed.signedUrl, wiretap: wt });
 });
 
 export default router;

@@ -1,65 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, Upload, Trash2, Fingerprint, Radio, ShieldAlert } from 'lucide-react';
+import { Upload, Trash2, Fingerprint, Radio } from 'lucide-react';
 import { api } from '../../utils/api';
+import { supabase } from '../../lib/supabase';
 
 export default function AdminPanel() {
-  const [auth, setAuth] = useState(false);
-  const [user, setUser] = useState('');
-  const [pwd, setPwd] = useState('');
-  const [err, setErr] = useState(null);
-
-  if (!auth) {
-    return (
-      <div className="h-full flex items-center justify-center bg-bureau-900">
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setErr(null);
-            try {
-              await api.adminLogin(user, pwd);
-              setAuth(true);
-            } catch {
-              setErr('Identifiants refusés.');
-            }
-          }}
-          className="w-80 border border-accent-red/40 bg-black/60 p-6"
-        >
-          <div className="flex items-center gap-2 text-accent-red uppercase text-xs tracking-widest mb-4">
-            <ShieldAlert size={16} /> Zone restreinte — MJ uniquement
-          </div>
-          <label className="block text-xs text-bureau-300 mb-1">IDENTIFIANT</label>
-          <input
-            value={user} onChange={(e) => setUser(e.target.value)}
-            className="w-full bg-bureau-800 border border-bureau-500 px-2 py-1 text-sm mb-3 outline-none focus:border-accent-blue"
-          />
-          <label className="block text-xs text-bureau-300 mb-1">CODE D'ACCÈS</label>
-          <input
-            type="password" value={pwd} onChange={(e) => setPwd(e.target.value)}
-            className="w-full bg-bureau-800 border border-bureau-500 px-2 py-1 text-sm mb-3 outline-none focus:border-accent-blue"
-          />
-          {err && <div className="text-xs text-accent-red mb-2">{err}</div>}
-          <button className="w-full bg-accent-red/20 border border-accent-red text-accent-red py-2 text-sm uppercase hover:bg-accent-red hover:text-white">
-            <Lock size={14} className="inline mr-1" /> Authentifier
-          </button>
-        </form>
-      </div>
-    );
-  }
-
-  return <AdminDashboard />;
-}
-
-function AdminDashboard() {
   const [tab, setTab] = useState('fingerprints');
   const [data, setData] = useState({ fingerprints: [], wiretaps: [] });
 
-  const refresh = () => api.adminListAll().then(setData);
-  useEffect(() => { refresh(); }, []);
+  const refresh = () => api.adminListAll().then(setData).catch(() => {});
+
+  useEffect(() => {
+    refresh();
+    const ch = supabase.channel('admin-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'fingerprints' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wiretaps' }, refresh)
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, []);
 
   return (
     <div className="h-full flex flex-col bg-bureau-900">
       <div className="bg-accent-red/10 border-b border-accent-red/30 px-4 py-2 text-xs uppercase tracking-widest text-accent-red">
-        ⚠ Panel MJ — Toute modification est journalisée
+        ⚠ Panel MJ — Toute modification est journalisée et synchronisée en temps réel
       </div>
 
       <div className="flex border-b border-bureau-500">
@@ -67,29 +29,25 @@ function AdminDashboard() {
           { id: 'fingerprints', label: 'Empreintes cibles', icon: <Fingerprint size={14} /> },
           { id: 'wiretaps', label: 'Écoutes', icon: <Radio size={14} /> },
         ].map((t) => (
-          <button key={t.id}
-                  onClick={() => setTab(t.id)}
+          <button key={t.id} onClick={() => setTab(t.id)}
                   className={`px-4 py-2 text-xs uppercase tracking-widest flex items-center gap-2
                     ${tab === t.id ? 'bg-bureau-700 text-accent-blue border-b-2 border-accent-blue'
-                                    : 'text-bureau-300 hover:bg-bureau-700'}`}>
+                                   : 'text-bureau-300 hover:bg-bureau-700'}`}>
             {t.icon} {t.label}
           </button>
         ))}
       </div>
 
       <div className="flex-1 overflow-auto p-4">
-        {tab === 'fingerprints' && (
-          <FingerprintsManager items={data.fingerprints} onChange={refresh} />
-        )}
-        {tab === 'wiretaps' && (
-          <WiretapsManager items={data.wiretaps} onChange={refresh} />
-        )}
+        {tab === 'fingerprints'
+          ? <FingerprintsManager items={data.fingerprints} />
+          : <WiretapsManager items={data.wiretaps} />}
       </div>
     </div>
   );
 }
 
-function FingerprintsManager({ items, onChange }) {
+function FingerprintsManager({ items }) {
   const [file, setFile] = useState(null);
   const [meta, setMeta] = useState({ nom: '', prenom: '', fiche: '', naissance: '', antecedents: '', notes: '' });
   const [busy, setBusy] = useState(false);
@@ -102,10 +60,8 @@ function FingerprintsManager({ items, onChange }) {
       await api.adminUploadFingerprint(file, meta);
       setFile(null);
       setMeta({ nom: '', prenom: '', fiche: '', naissance: '', antecedents: '', notes: '' });
-      onChange();
-    } finally {
-      setBusy(false);
-    }
+    } catch (err) { alert(err.message); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -128,7 +84,7 @@ function FingerprintsManager({ items, onChange }) {
                 <td className="p-2 text-white">{it.nom} {it.prenom}</td>
                 <td className="p-2 text-bureau-300">{it.fiche || '—'}</td>
                 <td>
-                  <button onClick={async () => { await api.adminDelete('fingerprint', it.id); onChange(); }}
+                  <button onClick={() => api.adminDelete('fingerprint', it.id)}
                           className="text-accent-red hover:bg-accent-red/20 p-1">
                     <Trash2 size={12} />
                   </button>
@@ -145,10 +101,9 @@ function FingerprintsManager({ items, onChange }) {
       <form onSubmit={upload} className="border border-bureau-500 bg-bureau-800 p-3 space-y-2">
         <div className="text-xs uppercase tracking-widest text-accent-blue mb-2">+ Nouvelle empreinte</div>
         <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0])}
-               className="text-xs w-full" />
+               className="text-xs w-full text-bureau-300" />
         {['nom', 'prenom', 'fiche', 'naissance', 'antecedents', 'notes'].map((f) => (
-          <input key={f} placeholder={f.toUpperCase()}
-                 value={meta[f]}
+          <input key={f} placeholder={f.toUpperCase()} value={meta[f]}
                  onChange={(e) => setMeta({ ...meta, [f]: e.target.value })}
                  className="w-full bg-bureau-900 border border-bureau-500 px-2 py-1 text-xs outline-none focus:border-accent-blue" />
         ))}
@@ -161,7 +116,7 @@ function FingerprintsManager({ items, onChange }) {
   );
 }
 
-function WiretapsManager({ items, onChange }) {
+function WiretapsManager({ items }) {
   const [file, setFile] = useState(null);
   const [meta, setMeta] = useState({ suspect: '', ligne: '', date: '', duree: '', mandat: '', transcription: '' });
   const [busy, setBusy] = useState(false);
@@ -174,10 +129,8 @@ function WiretapsManager({ items, onChange }) {
       await api.adminUploadWiretap(file, meta);
       setFile(null);
       setMeta({ suspect: '', ligne: '', date: '', duree: '', mandat: '', transcription: '' });
-      onChange();
-    } finally {
-      setBusy(false);
-    }
+    } catch (err) { alert(err.message); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -200,7 +153,7 @@ function WiretapsManager({ items, onChange }) {
                 <td className="p-2 font-mono text-accent-amber">{it.ligne}</td>
                 <td className="p-2 font-mono text-accent-green">{it.filename}</td>
                 <td>
-                  <button onClick={async () => { await api.adminDelete('wiretap', it.id); onChange(); }}
+                  <button onClick={() => api.adminDelete('wiretap', it.id)}
                           className="text-accent-red hover:bg-accent-red/20 p-1">
                     <Trash2 size={12} />
                   </button>
@@ -217,19 +170,16 @@ function WiretapsManager({ items, onChange }) {
       <form onSubmit={upload} className="border border-bureau-500 bg-bureau-800 p-3 space-y-2">
         <div className="text-xs uppercase tracking-widest text-accent-blue mb-2">+ Nouvelle écoute</div>
         <input type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0])}
-               className="text-xs w-full" />
+               className="text-xs w-full text-bureau-300" />
         {[
-          ['suspect', 'SUSPECT'],
-          ['ligne', 'LIGNE (ex: 06 12 34 56 78)'],
-          ['date', 'DATE CAPTATION'],
-          ['duree', 'DURÉE (mm:ss)'],
-          ['mandat', 'N° MANDAT'],
+          ['suspect', 'SUSPECT'], ['ligne', 'LIGNE'], ['date', 'DATE'],
+          ['duree', 'DURÉE (mm:ss)'], ['mandat', 'N° MANDAT'],
         ].map(([k, l]) => (
           <input key={k} placeholder={l} value={meta[k]}
                  onChange={(e) => setMeta({ ...meta, [k]: e.target.value })}
                  className="w-full bg-bureau-900 border border-bureau-500 px-2 py-1 text-xs outline-none focus:border-accent-blue" />
         ))}
-        <textarea placeholder="TRANSCRIPTION (optionnel)" value={meta.transcription}
+        <textarea placeholder="TRANSCRIPTION" value={meta.transcription}
                   onChange={(e) => setMeta({ ...meta, transcription: e.target.value })}
                   className="w-full bg-bureau-900 border border-bureau-500 px-2 py-1 text-xs h-20 outline-none focus:border-accent-blue" />
         <button disabled={!file || busy}

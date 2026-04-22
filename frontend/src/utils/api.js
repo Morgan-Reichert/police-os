@@ -1,8 +1,19 @@
-const BASE = ''; // Proxied via Vite
+import { supabase } from '../lib/supabase';
+
+// En prod Vercel : /_/backend/api/...  — en dev local : /api/... (via proxy Vite)
+const BASE = import.meta.env.VITE_API_BASE || '';
 
 async function req(path, opts = {}) {
-  const res = await fetch(BASE + path, opts);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const { data: { session } } = await supabase.auth.getSession();
+  const headers = {
+    ...(opts.headers || {}),
+    ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
+  };
+  const res = await fetch(BASE + path, { ...opts, headers });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || `${res.status} ${res.statusText}`);
+  }
   const ct = res.headers.get('content-type') || '';
   return ct.includes('application/json') ? res.json() : res.blob();
 }
@@ -17,23 +28,19 @@ export const api = {
 
   // INTERCEPTION
   listWiretaps: () => req('/api/interception/list'),
-  wiretapUrl: (id) => `/api/interception/stream/${id}`,
+  getSignedWiretapUrl: (id) => req(`/api/interception/signed/${id}`),
 
-  // MAGISTRAT
-  askMagistrat: (query, history) =>
+  // MAGISTRAT (historique)
+  listConversations: () => req('/api/magistrat/conversations'),
+  getConversation: (id) => req(`/api/magistrat/conversations/${id}`),
+  askMagistrat: (query, conversationId) =>
     req('/api/magistrat/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, history }),
+      body: JSON.stringify({ query, conversationId }),
     }),
 
-  // ADMIN
-  adminLogin: (user, password) =>
-    req('/api/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user, password }),
-    }),
+  // ADMIN (MJ seulement)
   adminUploadFingerprint: (file, meta) => {
     const fd = new FormData();
     fd.append('fingerprint', file);
@@ -47,6 +54,5 @@ export const api = {
     return req('/api/admin/wiretap', { method: 'POST', body: fd });
   },
   adminListAll: () => req('/api/admin/all'),
-  adminDelete: (type, id) =>
-    req(`/api/admin/${type}/${id}`, { method: 'DELETE' }),
+  adminDelete: (type, id) => req(`/api/admin/${type}/${id}`, { method: 'DELETE' }),
 };
