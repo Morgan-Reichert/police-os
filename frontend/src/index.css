@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', monospace;
+  color: #c9d4e3;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbars sombres */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #0f141c; }
+::-webkit-scrollbar-thumb { background: #3d4a5c; }
+::-webkit-scrollbar-thumb:hover { background: #5e6b7f; }
+
+/* Scanline CRT subtil */
+.crt::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg,
+    rgba(255,255,255,0.02) 0px,
+    rgba(255,255,255,0.02) 1px,
+    transparent 1px, transparent 3px);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Animation scan empreinte */
+@keyframes scan-line {
+  0%   { top: 0%; }
+  100% { top: 100%; }
+}
+.scan-line {
+  position: absolute; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, #00ff9c, transparent);
+  box-shadow: 0 0 12px #00ff9c;
+  animation: scan-line 1.4s linear infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0.3; }
+}
+.blink { animation: blink 1s step-start infinite; }
+
+/* Glitch "MATCH" */
+@keyframes glitch {
+  0%,100% { transform: translate(0); }
+  20% { transform: translate(-1px, 1px); }
+  40% { transform: translate(1px, -1px); }
+  60% { transform: translate(-1px, -1px); }
+  80% { transform: translate(1px, 1px); }
+}
+.glitch { animation: glitch 0.3s infinite; }
